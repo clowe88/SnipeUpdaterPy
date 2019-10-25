@@ -1,7 +1,7 @@
 # SnipeUpdaterPy
 Windows based Snipe-IT Inventory updater
 
-For this project I was setting out to create an agent of sorts for Snipe-IT.
+For this project I was setting out to create an agent of sorts for Snipe-IT (https://snipeitapp.com/).
 Currently only tested on Dell systems running Windows 10.
 
 The python script once turned into a .exe with pyinstaller (https://www.pyinstaller.org/) will gather system information 
