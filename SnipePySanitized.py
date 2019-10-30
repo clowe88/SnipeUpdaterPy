@@ -40,6 +40,7 @@ def get_info():
         printerlist = powershell('(Get-Printer).Name')
     except:
         serialnum = subprocess.getoutput("ioreg -l | grep IOPlatformSerialNumber")
+        asset = serialnum
         osname = subprocess.getoutput("sw_vers -productName")
         compname = subprocess.getoutput("hostname")
         modelname = subprocess.getoutput("sysctl hw.model")
