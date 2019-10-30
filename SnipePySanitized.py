@@ -104,7 +104,7 @@ def __main__():
             'content-type': "application/json"
                 }
 
-    query = url + "/bytag/" + asset
+    query = url + "/byserial/" + serialnum
     getresponse = requests.request("GET", query, headers=headers)
 
     #Parses the response to get just the ID number
