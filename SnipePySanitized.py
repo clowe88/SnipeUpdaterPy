@@ -1,8 +1,8 @@
-import requests, os, base64, subprocess, sys, json
+import requests, os, base64, subprocess, sys, json, time, datetime, mysql.connector
 from multiprocessing import Queue
 
 #Define all necessary variables
-global getresponse, asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers
+global getresponse, asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers, snipeid
 
 #Allows for simplified code when gathering system information
 def powershell(cmd, input=None):
@@ -17,9 +17,9 @@ def powershell(cmd, input=None):
 
 #Gathers the necessary information for uploading
 def get_info():
-    global asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers
+    global asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers, snipeid
 
-    try:
+    try:#Gets assets information on Windows based systems. Designed for Windows 10
         asset = powershell('wmic SystemEnclosure get SMBIOSAssetTag')
         osname = powershell('(Get-WmiObject -Class win32_operatingsystem).Caption')
         manufacturer = powershell('(Get-WmiObject -Class win32_computersystem).Manufacturer')
@@ -27,7 +27,7 @@ def get_info():
         modelname = powershell('(Get-WmiObject -Class win32_computersystem).Model')
         ramtotal = powershell('(Get-WmiObject -Class win32_computersystem).TotalPhysicalMemory/1Gb')
         ramtotal = str(round(float(ramtotal))) + "GB"
-        lastlogon = powershell('(Get-WmiObject -Class Win32_NetworkLoginProfile | Sort-Object -Property LastLogon -Descending | Select-Object -Property * -First 1 | Where-Object {$_.LastLogon -match "(\d{14})"} | Foreach-Object { New-Object PSObject -Property @{ Name=$_.Name;LastLogon=[datetime]::ParseExact($matches[0], "yyyyMMddHHmmss", $null)}}).Name')
+        lastlogon = powershell('[System.Security.Principal.WindowsIdentity]::GetCurrent().Name')
         serialnum = powershell('wmic SystemEnclosure get SerialNumber')
         osver = powershell('(Get-WMIObject win32_operatingsystem).Version')
         #Check if a Wifi MAC is passed, omits entry if no valid Wifi adapter
@@ -38,8 +38,9 @@ def get_info():
         ipv4address = powershell('(Get-NetIpaddress -InterfaceAlias Ethernet* -AddressFamily IPv4).IPAddress')
         softwarelist = powershell("(Get-ItemProperty HKLM:/Software/Wow6432Node/Microsoft/Windows/CurrentVersion/Uninstall/* | Select-Object DisplayName).DisplayName")
         printerlist = powershell('(Get-Printer).Name')
-    except:
+    except:#Gathers assets information on MacOSX based systems. Designed for High Sierra or newer.
         serialnum = subprocess.getoutput("ioreg -l | grep IOPlatformSerialNumber")
+        asset = serialnum
         osname = subprocess.getoutput("sw_vers -productName")
         compname = subprocess.getoutput("hostname")
         modelname = subprocess.getoutput("sysctl hw.model")
@@ -57,9 +58,8 @@ def get_info():
             ipv4address = subprocess.getoutput("ifconfig getifaddr en1")
         softwarelist = subprocess.getoutput("ls '/Applications/'")
         printerlist = subprocess.getoutput("lpstat -p | awk '{print $2}'")
-             
             
-            #Passes list of software as an array #Not used in this implmentation
+    #Passes list of software as an array #Not used in this implmentation
     software = []
     for line in softwarelist.split('\n'):
         software.append(line)
@@ -74,9 +74,8 @@ def get_info():
     printers = (printers.replace("[", "").replace("]", "").replace("'", ""))
 
     #Cleanup formatting in information gathering
-    asset = (asset.replace('SMBIOSAssetTag','').replace("\r", '').replace("\n", '').replace(' ', ''))
+    asset = (asset.replace('SMBIOSAssetTag','').replace("IOPlatformSerialNumber","").replace('SerialNumber', '').replace("\r", '').replace("\n", '').replace(' ', '').replace("=","").replace('"',"").replace("|",""))
     osname = (osname.replace('Microsoft ','').replace('\n',''))
-    
     serialnum = (serialnum.replace("IOPlatformSerialNumber","").replace('SerialNumber', '').replace("\r", '').replace("\n", '').replace(' ', '').replace("=","").replace('"',"").replace("|",""))
     compname = compname.replace('\n', '')
     modelname = modelname.replace('\n', '')
@@ -86,8 +85,8 @@ def get_info():
     wifimac = wifimac.replace('\n','')
     osver = osver.replace('\n','')
 
-def __main__():
-    global getresponse, asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers
+def send_info():
+    global getresponse, asset, osname, ramtotal, serialnum, compname, modelname, lastlogon, osver, wifimac, ethermac, ipv4address, software, printers, snipeid
    
     #Gather System Information
     get_info()
@@ -98,13 +97,13 @@ def __main__():
         
     #Gets the current information on assest if it exists,
     #used to get the ID field to modify the URL when updating instead of new additions
-    url = "<YOUR-URL-HERE>"
+    url = "<YOUR-URI-HERE>"
     headers = {'authorization': "Bearer <YOUR-API-KEY-HERE>",
             'accept': "application/json", 
             'content-type': "application/json"
                 }
 
-    query = url + "/byserial/" + serialnum
+    query = url + "/bytag/" + asset
     getresponse = requests.request("GET", query, headers=headers)
 
     #Parses the response to get just the ID number
@@ -124,6 +123,7 @@ def __main__():
             "status_id":2,
             "category_id":2,
             "manufacturer_id":1,
+            "deleted_at":"null",
             "_snipeit_last_login_4":lastlogon,
             "_snipeit_ip_address_5":ipv4address,
             "_snipeit_ethernet_mac_2":ethermac,
@@ -136,10 +136,22 @@ def __main__():
                 }
 
     #Base URL of SnipeIT server
-    url = "<YOUR-URL-HERE>"
+    url = "<YOUR-URI-HERE>"
 
     #If the asset exists, this sets the request to update(PATCH/PUT) instead of add(Put)
-    if len(data) > 3 and data["deleted_at"] == None:
+    if "id" in data:
+        #restores Asset to allow updating
+        cnx = mysql.connector.connect(user='<REMOTE-DB-USERNAME>', password="<DB-PASSWORD>",
+                              host="<SERVER-IP>", 
+                              database="<DATABASE-NAME>")
+        cursor = cnx.cursor()
+
+        restoreasset = ("UPDATE assets SET deleted_at=NULL WHERE id=" + str(snipeid) + ";")
+        cursor.execute(restoreasset)
+        cnx.commit()
+        cursor.close()
+        cnx.close()
+
         updateaction = "PATCH"
         fields["id"] = snipeid
         url = url + "/" + str(snipeid)
@@ -157,4 +169,13 @@ def __main__():
 
     print(response.text)
     
+def __main__():
+    
+    x = True
+    
+    while x == True: 
+        
+        send_info()
+        time.sleep(21600)#21600 = 6 hours
+     
 __main__()
